@@ -1,0 +1,208 @@
+---
+title: "Spam Dectection"
+author: Ra'Shawn Howard
+output: html_notebook
+---
+
+# Project 4: Wait Thats Spam!
+
+# Sentiment Analysis and Prediction of SMS Messages
+
+# Questions:
++ Can we use this data to predict if a SMS message is spam?
++ What are the most common positive words?
++ What are the most common negative words?
++ What are the most important positive and negative words as described by the model? 
+
+# Data
+The dataset can be found [here]("https://www.kaggle.com/uciml/sms-spam-collection-dataset"). The SMS Spam Collection Dataset is a set of SMS tagged messages that have been collected for SMS Spam research. It contains one set of SMS messages in English of 5,574 messages, tagged acording being ham (legitimate) or spam.
+
+# Methods
+I used comparison word cloud for the most common positive and negative words. The size of a word's text is in proportion to its frequency within its sentiment. I used bing word bank for the sentiment analysis. I chose a lasso logistic model. This model does well on text data. I used single word tokens, convert tokens into weights using tfidf, only kept 500 tokens after removing stop words. The model is sensitive to centering and scaling, so I normalized the data. I used grid search to find the best penalty. I used bootstrap resampling to test the model before running the final model on the test set. It's easier to detect non-spam SMS messages than it is to detect spam SMS messages. Our overall accuracy rate is good at 96%
+
+# Results
+
+# Limitations and Next Steps
+Things we can do to get better results: include not only unigrams but bi-grams, tri-grams, what stopwords make the most sense for my data, include more words in the word bank (I only included 500), we could choose a different weighting other than tfidf, we could try other types of models such as SVM or Naive Bayes.
+
+```{r libraries, include=FALSE,echo=FALSE}
+library(tidyverse)
+library(tidytext)
+knitr::opts_chunk$set(include=FALSE,echo=FALSE)
+```
+
+```{r load-data}
+spam <- read_csv("https://storage.googleapis.com/kagglesdsdata/datasets/483/982/spam.csv?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=gcp-kaggle-com%40kaggle-161607.iam.gserviceaccount.com%2F20210522%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20210522T051335Z&X-Goog-Expires=259199&X-Goog-SignedHeaders=host&X-Goog-Signature=270059f5b3f817322c1cb22d59104656158a2953342d80e15723afd9cd1eda1103f8d1f59034db8d0c113606bd266ccf5933af4eba73236033012570a879d133537f3e9cd0472247194017f9304f1756632ec3395c717608b3cf793b91163aeeb57dc16fe37806f65970f1b9a66d1be3b86468dadb897b289813192b378cb2904b073097244a49f10c0ec7befbfdba22047f096d16f6a07a684baa2f2d553281c5e878f8fdff4461369dbd5a8d3fa5f8e0f61e1d85f5fe5256326cfff29e10a6d988dcfcd62fbfe46442daa20426762b0db0bec2a62758f0dad84e4efd531b2b12320aaff3c3dbe0800b90089cbf19fe6b3b54e8cf1f491b63171fe8cee6a7ea",col_names = TRUE)
+
+head(spam)
+
+spam %>% 
+  select(-X3,-X4,-X5) %>% 
+  rename(spam=v1,text=v2) -> spam
+```
+
+# EDA
+```{r word-clouds}
+library(wordcloud)
+
+spam %>% 
+  unnest_tokens(word,text) %>% 
+  anti_join(stop_words,by="word") %>% 
+  filter(spam == "ham") %>% 
+  count(word) %>% 
+  with(wordcloud(word,n,max.words = 100,colors=brewer.pal(8, "Dark2")))
+
+spam %>% 
+  unnest_tokens(word,text) %>% 
+  anti_join(stop_words,by="word") %>% 
+  filter(spam == "spam") %>% 
+  count(word) %>% 
+  with(wordcloud(word,n,max.words = 100,colors=brewer.pal(8, "Dark2")))
+
+library(reshape2) # for acast() function
+
+spam %>% 
+  unnest_tokens(word,text) %>% 
+  anti_join(stop_words,by="word") %>% 
+  left_join(get_sentiments("bing")) %>% 
+  count(word,sentiment,sort=TRUE) %>% 
+  na.omit() %>% 
+  acast(word~sentiment, value.var = "n",fill=0) %>% 
+  comparison.cloud(colors=brewer.pal(2, "Dark2"),
+                   max.words = 100)
+```
+
+```{r spam-distribution}
+spam %>% 
+  ggplot(aes(spam)) +
+  geom_bar() +
+  ggthemes::theme_hc() +
+  xlab("") +
+  ggtitle("Distribution of Spam")
+
+# What can we see from this plot?
+# What does it mean for modeling?
+```
+
+```{r plot-total-words}
+spam %>% 
+  unnest_tokens(word,text) %>% 
+  anti_join(stop_words,by ="word") %>% 
+count(word,name ='total_words',sort = TRUE) %>% 
+  ggplot(aes(total_words)) +
+  geom_bar() +
+  ggthemes::theme_hc()
+
+# make spam a factor
+spam %>% 
+  mutate(spam = as.factor(spam)) -> spam # could've done this in recipes for cleaner code
+```
+
+# Build a Model
+```{r split-data}
+set.seed(230)
+split <- initial_split(spam,strata = spam)
+train <- training(split)
+test <- testing(split)
+```
+
+```{r pre-process-data}
+library(textrecipes)
+rec <- recipe(spam~text,data=train) %>% 
+  step_tokenize(text) %>% # Could do n-grams(sentences)
+  step_stopwords(text) %>% 
+  step_tokenfilter(text,max_tokens = 500) %>% # only keep 500 tokens after removing stop words
+  step_tfidf(text) %>% # convert tokens into weights using tfidf (usually outperforms term frequency)
+  step_normalize(all_predictors()) # model is sensitive to centering and scaling
+
+rec_prep <- prep(rec)
+rec_prep
+```
+
+```{r}
+lasso_spec<- logistic_reg(penalty = tune(), mixture = 1) %>%
+  set_engine("glmnet")
+
+lasso_wf<- workflow() %>% 
+  add_recipe(rec) %>% 
+  add_model(lasso_spec)
+
+lasso_wf
+```
+
+# Tune Model Parameters
+```{r}
+lambda_grid <- grid_regular(penalty(), levels = 30)
+
+set.seed(123)
+spam_folds <- bootstraps(train,strata = spam)
+spam_folds
+```
+
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(2021)
+lasso_grid <- tune_grid(
+  lasso_wf,
+  resamples = spam_folds,
+  grid = lambda_grid
+  #metric = yardstick::metric_set(roc_auc,ppv,npv)
+)
+```
+
+```{r}
+lasso_grid %>% 
+  collect_metrics() %>% 
+  ggplot(aes(penalty,mean,color=.metric)) +
+  geom_line(size=1.5,show.legend = FALSE) +
+  facet_wrap(~.metric) +
+  scale_x_log10() +
+  ggthemes::theme_hc()
+```
+
+# Choose final model
+
+```{r}
+best_auc <- lasso_grid %>% 
+  select_best("roc_auc")
+
+best_auc
+
+final_lasso <- finalize_workflow(lasso_wf,best_auc)
+
+final_lasso
+```
+
+```{r variable-importance-plot}
+library(vip)
+
+p2 <- final_lasso %>% 
+  fit(train) %>% 
+  pull_workflow_fit() %>% 
+  vip::vi(lambda = best_auc$penalty) %>% 
+  group_by(Sign) %>% 
+  top_n(20, wt = abs(Importance)) %>% 
+  ungroup() %>% 
+  mutate(Importance = abs(Importance),
+         Variable = str_remove(Variable,"tfidf_text_"),
+         Variable = fct_reorder(Variable,Importance)) %>% 
+  ggplot(aes(Importance,Variable,fill=Sign)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~Sign, scales = "free_y")
+
+p2 + ggthemes::theme_hc()
+```
+
+```{r conf-mat}
+spam_final <- last_fit(final_lasso,split)
+
+spam_final %>% 
+  collect_metrics()
+
+spam_final %>% 
+  collect_predictions() %>% 
+  conf_mat(spam,.pred_class)
+```
+
+
