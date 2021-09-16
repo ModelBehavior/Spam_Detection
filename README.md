@@ -16,7 +16,7 @@ I used comparison word cloud for the most common positive and negative words. Th
 
 # Results
 ![](https://github.com/ModelBehavior/Spam_Detection/blob/main/project4_img1)
-![](/images/project4_img2)
+![](https://github.com/ModelBehavior/Spam_Detection/blob/main/project4_img2)
 
 # Limitations and Next Steps
 Things we can do to get better results: include not only unigrams but bi-grams, tri-grams, what stopwords make the most sense for my data, include more words in the word bank (I only included 500), we could choose a different weighting other than tfidf, we could try other types of models such as SVM or Naive Bayes.
